@@ -1,25 +1,18 @@
-from http.server import BaseHTTPRequestHandler
-import json
+from flask import Flask, jsonify
+from flask_cors import CORS
 
-class handler(BaseHTTPRequestHandler):
+app = Flask(__name__)
 
-    def do_GET(self):
+# IZINKAN SEMUA DOMAIN
+CORS(app)
 
-        data = {
-            "status": "online",
-            "message": "Halo dari Python Vercel",
-            "creator": "Pembri"
-        }
+@app.route("/api")
+def api():
 
-        self.send_response(200)
-        self.send_header(
-            'Content-type',
-            'application/json'
-        )
-        self.end_headers()
+    return jsonify({
+        "status": "online",
+        "message": "Halo dari Python Vercel",
+        "creator": "Pembri"
+    })
 
-        self.wfile.write(
-            json.dumps(data).encode()
-        )
-
-        return
+handler = app
