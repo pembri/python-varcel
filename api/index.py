@@ -63,7 +63,7 @@ def api_handler():
         return Response(generate(), headers=response_headers)
 
     # ==========================================
-    # ALUR 2: GENERATE INFO
+    # ALUR 2: GENERATE INFO 
     # ==========================================
     url = None
     if request.method == 'POST':
@@ -76,8 +76,7 @@ def api_handler():
         return jsonify({"success": False, "error": "Silakan masukkan URL YouTube yang valid"}), 400
         
     try:
-        # ---> TRIK BYPASS READ-ONLY VERCEL <---
-        # Kita copy file cookies.txt ke folder /tmp agar yt-dlp bebas baca/tulis
+        # Trik bypass Read-Only Vercel
         current_dir = os.path.dirname(os.path.abspath(__file__))
         cookie_source = os.path.join(current_dir, 'cookies.txt')
         cookie_tmp = '/tmp/cookies.txt'
@@ -85,13 +84,12 @@ def api_handler():
         if os.path.exists(cookie_source):
             shutil.copyfile(cookie_source, cookie_tmp)
 
+        # KUNCI PERBAIKAN: Hapus baris 'format' agar tidak crash pada lagu Topic/Music
         ydl_opts = {
-            'format': 'bestaudio/best',
             'noplaylist': True,
             'quiet': True,
             'no_warnings': True,
             'extract_flat': False,
-            # Arahkan yt-dlp untuk membaca cookies dari folder /tmp
             'cookiefile': cookie_tmp if os.path.exists(cookie_tmp) else None
         }
         
@@ -100,10 +98,28 @@ def api_handler():
             title = info.get('title', 'YTAudio Cloud')
             thumbnail = info.get('thumbnail', '')
             duration = info.get('duration', 0)
-            best_audio_url = info.get('url')
+            
+            # --- PENCARIAN AUDIO MANUAL ANTI-CRASH ---
+            best_audio_url = None
+            formats = info.get('formats', [])
+            
+            # 1. Prioritaskan format yang murni audio (tanpa video)
+            audio_formats = [f for f in formats if f.get('vcodec') == 'none' and f.get('acodec') != 'none']
+            
+            if audio_formats:
+                # Urutkan berdasarkan kualitas/bitrate (abr) dari yang paling tinggi
+                audio_formats = sorted(audio_formats, key=lambda x: x.get('abr', 0) or 0, reverse=True)
+                best_audio_url = audio_formats[0].get('url')
+            else:
+                # 2. Kalau gagal, ambil dari default info URL yt-dlp
+                best_audio_url = info.get('url')
+                
+                # 3. Kalau masih kosong juga, paksa ambil format apa pun yang tersedia di akhir daftar
+                if not best_audio_url and formats:
+                    best_audio_url = formats[-1].get('url')
             
             if not best_audio_url:
-                return jsonify({"success": False, "error": "Gagal mengekstrak streaming audio"}), 400
+                return jsonify({"success": False, "error": "Gagal mengekstrak streaming audio dari video ini"}), 400
             
             base_api_url = "https://python-varcel.vercel.app/api"
             
