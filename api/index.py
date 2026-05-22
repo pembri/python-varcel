@@ -3,6 +3,8 @@ from flask_cors import CORS
 import yt_dlp
 import requests
 import urllib.parse
+import os
+import shutil
 
 app = Flask(__name__)
 # Mengizinkan akses CORS dari domain mana pun
@@ -61,7 +63,7 @@ def api_handler():
         return Response(generate(), headers=response_headers)
 
     # ==========================================
-    # ALUR 2: GENERATE INFO (MEMBACA COOKIES)
+    # ALUR 2: GENERATE INFO
     # ==========================================
     url = None
     if request.method == 'POST':
@@ -74,14 +76,23 @@ def api_handler():
         return jsonify({"success": False, "error": "Silakan masukkan URL YouTube yang valid"}), 400
         
     try:
-        # ---> KONFIGURASI MEMBACA COOKIES.TXT <---
+        # ---> TRIK BYPASS READ-ONLY VERCEL <---
+        # Kita copy file cookies.txt ke folder /tmp agar yt-dlp bebas baca/tulis
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        cookie_source = os.path.join(current_dir, 'cookies.txt')
+        cookie_tmp = '/tmp/cookies.txt'
+        
+        if os.path.exists(cookie_source):
+            shutil.copyfile(cookie_source, cookie_tmp)
+
         ydl_opts = {
             'format': 'bestaudio/best',
             'noplaylist': True,
             'quiet': True,
             'no_warnings': True,
             'extract_flat': False,
-            'cookiefile': 'api/cookies.txt' 
+            # Arahkan yt-dlp untuk membaca cookies dari folder /tmp
+            'cookiefile': cookie_tmp if os.path.exists(cookie_tmp) else None
         }
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
