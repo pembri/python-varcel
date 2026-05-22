@@ -79,13 +79,14 @@ def api_handler():
         return jsonify({"success": False, "error": "Silakan masukkan URL YouTube yang valid"}), 400
         
     try:
-        # Konfigurasi yt-dlp untuk mengekstrak informasi tanpa mengunduh berkas ke server
+        # ---> INI KONFIGURASI YANG LU MINTA (PAKAI COOKIES) <---
         ydl_opts = {
             'format': 'bestaudio/best',
             'noplaylist': True,
             'quiet': True,
             'no_warnings': True,
-            'extract_flat': False
+            'extract_flat': False,
+            'cookiefile': 'api/cookies.txt' 
         }
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -98,7 +99,7 @@ def api_handler():
             if not best_audio_url:
                 return jsonify({"success": False, "error": "Gagal mengekstrak streaming audio dari URL tersebut"}), 400
             
-            # URL dasar API Vercel sesuai instruksi Anda
+            # URL dasar API Vercel
             base_api_url = "https://python-varcel.vercel.app/api"
             
             # Mempersiapkan opsi format audio yang akan ditampilkan di frontend
