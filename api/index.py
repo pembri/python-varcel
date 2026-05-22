@@ -3,7 +3,6 @@ from flask_cors import CORS
 import requests
 import urllib.parse
 import re
-import time
 
 app = Flask(__name__)
 CORS(app)
@@ -29,39 +28,6 @@ def extract_video_id(url):
             return m.group(1)
     return None
 
-def get_info(video_url):
-    encoded = urllib.parse.quote(video_url)
-    r = requests.get(
-        f"https://{RAPIDAPI_HOST}/ajax/info.php?url={encoded}",
-        headers=HEADERS,
-        timeout=15
-    )
-    return r.json()
-
-def get_download(video_url, fmt='mp3'):
-    encoded = urllib.parse.quote(video_url)
-    r = requests.get(
-        f"https://{RAPIDAPI_HOST}/ajax/download.php?format={fmt}&add_info=0&url={encoded}&audio_quality=128&allow_extended_duration=false&no_merge=false&audio_language=en",
-        headers=HEADERS,
-        timeout=15
-    )
-    return r.json()
-
-def poll_progress(progress_url, max_wait=30):
-    for _ in range(max_wait):
-        r = requests.get(progress_url, headers=HEADERS, timeout=10)
-        data = r.json()
-        # Kalau sudah ada download_url, return
-        dl_url = data.get('download_url') or data.get('url') or data.get('result')
-        if dl_url:
-            return dl_url
-        # Kalau masih proses, tunggu 1 detik
-        status = data.get('status') or data.get('progress')
-        if status in ('failed', 'error'):
-            return None
-        time.sleep(1)
-    return None
-
 @app.route('/api', methods=['GET', 'POST'])
 def api_handler():
     action = request.args.get('action')
@@ -80,26 +46,16 @@ def api_handler():
         stream_url = urllib.parse.unquote(stream_url)
         title = urllib.parse.unquote(title)
 
-        dl_headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-            'Referer': 'https://www.youtube.com/',
-        }
-
         def generate():
             try:
-                r = requests.get(stream_url, stream=True, headers=dl_headers, timeout=60)
+                r = requests.get(stream_url, stream=True, timeout=60)
                 for chunk in r.iter_content(chunk_size=1024 * 64):
                     if chunk:
                         yield chunk
             except:
                 pass
 
-        content_types = {
-            'mp3': 'audio/mpeg',
-            'wav': 'audio/wav',
-            'm4a': 'audio/mp4',
-            'webm': 'audio/webm'
-        }
+        content_types = {'mp3':'audio/mpeg','wav':'audio/wav','m4a':'audio/mp4','webm':'audio/webm'}
         content_type = content_types.get(ext.lower(), 'application/octet-stream')
         safe_title = "".join([c for c in title if c.isalpha() or c.isdigit() or c in ' -_']).strip() or "audio"
 
@@ -110,7 +66,21 @@ def api_handler():
         })
 
     # ==========================================
-    # ALUR 2: GENERATE INFO
+    # ALUR 2: POLL PROGRESS
+    # ==========================================
+    if action == 'progress':
+        progress_url = request.args.get('url')
+        if not progress_url:
+            return jsonify({"error": "Missing progress URL"}), 400
+        progress_url = urllib.parse.unquote(progress_url)
+        try:
+            r = requests.get(progress_url, headers=HEADERS, timeout=10)
+            return jsonify(r.json())
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    # ==========================================
+    # ALUR 3: GENERATE INFO
     # ==========================================
     url = None
     if request.method == 'POST':
@@ -123,51 +93,42 @@ def api_handler():
         return jsonify({"success": False, "error": "Silakan masukkan URL YouTube yang valid"}), 400
 
     try:
-        # Step 1: Ambil info video
-        info = get_info(url)
+        video_id = extract_video_id(url)
+        encoded = urllib.parse.quote(url)
+
+        # Ambil thumbnail langsung dari YouTube (tidak perlu API)
+        thumbnail = f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg" if video_id else ""
+
+        # Ambil info dari RapidAPI
+        info_resp = requests.get(
+            f"https://{RAPIDAPI_HOST}/ajax/info.php?url={encoded}",
+            headers=HEADERS,
+            timeout=15
+        )
+        info = info_resp.json()
         title = info.get('title', 'YTAudio Cloud')
-        thumbnail = info.get('thumbnail', '')
         duration = info.get('duration', 0)
 
-        # Step 2: Request download mp3
-        dl_data = get_download(url, fmt='mp3')
+        # Request download mp3
+        dl_resp = requests.get(
+            f"https://{RAPIDAPI_HOST}/ajax/download.php?format=mp3&add_info=0&url={encoded}&audio_quality=128&allow_extended_duration=false&no_merge=false",
+            headers=HEADERS,
+            timeout=15
+        )
+        dl_data = dl_resp.json()
+
         if not dl_data.get('success'):
-            return jsonify({"success": False, "error": "Gagal memproses video"}), 400
+            return jsonify({"success": False, "error": "Gagal memulai proses download"}), 400
 
-        progress_url = dl_data.get('progress_url')
-        if not progress_url:
-            return jsonify({"success": False, "error": "Tidak ada progress URL"}), 400
-
-        # Step 3: Poll sampai dapat download URL
-        final_url = poll_progress(progress_url)
-        if not final_url:
-            return jsonify({"success": False, "error": "Timeout menunggu proses download"}), 400
-
-        # Buat format download lewat proxy
-        supported_exts = [
-            {'ext': 'mp3', 'label': 'MP3 (Audio Populer)'},
-            {'ext': 'm4a', 'label': 'M4A (Original AAC)'},
-            {'ext': 'wav', 'label': 'WAV (Kualitas Tinggi)'},
-        ]
-
-        formats_data = []
-        for item in supported_exts:
-            ext = item['ext']
-            encoded_title = urllib.parse.quote(title)
-            encoded_url = urllib.parse.quote(final_url)
-            download_link = f"{BASE_API_URL}?action=download&ext={ext}&title={encoded_title}&url={encoded_url}"
-            formats_data.append({
-                'ext': ext,
-                'label': item['label'],
-                'url': download_link
-            })
+        progress_url = dl_data.get('progress_url', '')
 
         return jsonify({
             'success': True,
             'title': title,
             'thumbnail': thumbnail,
             'duration': duration,
-            'formats': formats_data
+            'progress_url': progress_url,
+            'base_api_url': BASE_API_URL
         })
 
     except Exception as e:
