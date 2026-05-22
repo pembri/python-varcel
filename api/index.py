@@ -219,3 +219,21 @@ def api_handler():
             'success': False,
             'error': f"Gagal memproses video: {str(e)}"
         }), 500
+
+
+@app.route('/api/debug', methods=['GET'])
+def debug():
+    url = request.args.get('url')
+    if not url:
+        return jsonify({"error": "no url"}), 400
+    video_id = extract_video_id(url)
+    data = fetch_player(video_id, 'android')
+    status = data.get('playabilityStatus', {})
+    streaming = data.get('streamingData', {})
+    adaptive = streaming.get('adaptiveFormats', [])
+    return jsonify({
+        "status": status,
+        "adaptive_count": len(adaptive),
+        "first_format": adaptive[0] if adaptive else None,
+        "has_url": bool(adaptive[0].get('url') if adaptive else False)
+    })
