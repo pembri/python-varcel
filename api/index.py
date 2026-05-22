@@ -82,12 +82,14 @@ def api_handler():
             'no_warnings': True,
             'extract_flat': False,
             'nocheckcertificate': True,
-            # Maksa Vercel pakai IPv4 (IPv6 sering kena blokir YouTube)
             'source_address': '0.0.0.0',
-            # Menyamar jadi klien Android dengan parameter tambahan
+            # Ganti penyamaran jadi iOS / TV biar lebih longgar dari Android
             'extractor_args': {
-                'youtube': ['client=android', 'player_skip=webpage']
-            }
+                'youtube': ['client=ios', 'player_skip=webpage']
+            },
+            # Tambahan: acak IP lokal dan bypass blokir wilayah
+            'geo_bypass': True,
+            'sleep_interval': 1
         }
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
