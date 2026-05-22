@@ -61,7 +61,7 @@ def api_handler():
         return Response(generate(), headers=response_headers)
 
     # ==========================================
-    # ALUR 2: GENERATE INFO (TANPA COOKIES)
+    # ALUR 2: GENERATE INFO (MEMBACA COOKIES)
     # ==========================================
     url = None
     if request.method == 'POST':
@@ -74,22 +74,14 @@ def api_handler():
         return jsonify({"success": False, "error": "Silakan masukkan URL YouTube yang valid"}), 400
         
     try:
-        # ---> KONFIGURASI BARU: JALUR NINJA TANPA COOKIES <---
+        # ---> KONFIGURASI MEMBACA COOKIES.TXT <---
         ydl_opts = {
             'format': 'bestaudio/best',
             'noplaylist': True,
             'quiet': True,
             'no_warnings': True,
             'extract_flat': False,
-            'nocheckcertificate': True,
-            'source_address': '0.0.0.0',
-            # Ganti penyamaran jadi iOS / TV biar lebih longgar dari Android
-            'extractor_args': {
-                'youtube': ['client=ios', 'player_skip=webpage']
-            },
-            # Tambahan: acak IP lokal dan bypass blokir wilayah
-            'geo_bypass': True,
-            'sleep_interval': 1
+            'cookiefile': 'api/cookies.txt' 
         }
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
