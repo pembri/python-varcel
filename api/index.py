@@ -99,15 +99,18 @@ def api_handler():
         # Ambil thumbnail langsung dari YouTube (tidak perlu API)
         thumbnail = f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg" if video_id else ""
 
-        # Ambil info dari RapidAPI
-        info_resp = requests.get(
-            f"https://{RAPIDAPI_HOST}/ajax/info.php?url={encoded}",
-            headers=HEADERS,
-            timeout=15
-        )
-        info = info_resp.json()
-        title = info.get('title', 'YTAudio Cloud')
-        duration = info.get('duration', 0)
+        # Ambil title & duration dari YouTube oEmbed (gratis, tanpa API key)
+        title = 'YTAudio Cloud'
+        duration = 0
+        try:
+            oembed = requests.get(
+                f"https://www.youtube.com/oembed?url={encoded}&format=json",
+                timeout=10
+            )
+            oembed_data = oembed.json()
+            title = oembed_data.get('title', 'YTAudio Cloud')
+        except:
+            pass
 
         # Request download mp3
         dl_resp = requests.get(
