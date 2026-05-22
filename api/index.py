@@ -3,29 +3,25 @@ from flask_cors import CORS
 import requests
 import urllib.parse
 import re
+import time
 
 app = Flask(__name__)
 CORS(app)
 
-ANDROID_HEADERS = {
-    'User-Agent': 'com.google.android.youtube/19.09.37 (Linux; U; Android 11) gzip',
-    'Content-Type': 'application/json',
-    'X-YouTube-Client-Name': '3',
-    'X-YouTube-Client-Version': '19.09.37',
-}
+RAPIDAPI_KEY = "562ef3b0d6mshe01d3ade47117b1p1d6a93jsn1f4d947f6e65"
+RAPIDAPI_HOST = "youtube-info-download-api.p.rapidapi.com"
+BASE_API_URL = "https://python-varcel.vercel.app/api"
 
-IOS_HEADERS = {
-    'User-Agent': 'com.google.ios.youtube/19.09.3 (iPhone14,3; U; CPU iOS 15_6 like Mac OS X)',
-    'Content-Type': 'application/json',
-    'X-YouTube-Client-Name': '5',
-    'X-YouTube-Client-Version': '19.09.3',
+HEADERS = {
+    "x-rapidapi-key": RAPIDAPI_KEY,
+    "x-rapidapi-host": RAPIDAPI_HOST,
+    "Content-Type": "application/json"
 }
 
 def extract_video_id(url):
     patterns = [
         r'(?:v=|youtu\.be/)([a-zA-Z0-9_-]{11})',
         r'(?:embed/)([a-zA-Z0-9_-]{11})',
-        r'^([a-zA-Z0-9_-]{11})$'
     ]
     for p in patterns:
         m = re.search(p, url)
@@ -33,67 +29,37 @@ def extract_video_id(url):
             return m.group(1)
     return None
 
-def fetch_player(video_id, client='android'):
-    if client == 'ios':
-        payload = {
-            "context": {
-                "client": {
-                    "clientName": "IOS",
-                    "clientVersion": "19.09.3",
-                    "deviceModel": "iPhone14,3",
-                    "userAgent": "com.google.ios.youtube/19.09.3 (iPhone14,3; U; CPU iOS 15_6 like Mac OS X)",
-                    "hl": "en",
-                    "timeZone": "UTC",
-                    "utcOffsetMinutes": 0
-                }
-            },
-            "videoId": video_id,
-            "contentCheckOk": True,
-            "racyCheckOk": True
-        }
-        headers = IOS_HEADERS
-        url = 'https://www.youtube.com/youtubei/v1/player'
-    else:
-        payload = {
-            "context": {
-                "client": {
-                    "clientName": "ANDROID",
-                    "clientVersion": "19.09.37",
-                    "androidSdkVersion": 30,
-                    "userAgent": "com.google.android.youtube/19.09.37 (Linux; U; Android 11) gzip",
-                    "hl": "en",
-                    "timeZone": "UTC",
-                    "utcOffsetMinutes": 0
-                }
-            },
-            "videoId": video_id,
-            "params": "8AEB",
-            "contentCheckOk": True,
-            "racyCheckOk": True
-        }
-        headers = ANDROID_HEADERS
-        url = 'https://www.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8'
+def get_info(video_url):
+    encoded = urllib.parse.quote(video_url)
+    r = requests.get(
+        f"https://{RAPIDAPI_HOST}/ajax/info.php?url={encoded}",
+        headers=HEADERS,
+        timeout=15
+    )
+    return r.json()
 
-    resp = requests.post(url, headers=headers, json=payload, timeout=15)
-    return resp.json()
+def get_download(video_url, fmt='mp3'):
+    encoded = urllib.parse.quote(video_url)
+    r = requests.get(
+        f"https://{RAPIDAPI_HOST}/ajax/download.php?format={fmt}&add_info=0&url={encoded}&audio_quality=128&allow_extended_duration=false&no_merge=false&audio_language=en",
+        headers=HEADERS,
+        timeout=15
+    )
+    return r.json()
 
-def get_best_audio(data):
-    streaming = data.get('streamingData', {})
-    adaptive = streaming.get('adaptiveFormats', [])
-    regular = streaming.get('formats', [])
-    all_formats = adaptive + regular
-
-    # Filter audio only
-    audio = [f for f in all_formats if f.get('mimeType', '').startswith('audio/') and f.get('url')]
-    if audio:
-        audio.sort(key=lambda x: x.get('bitrate', 0), reverse=True)
-        return audio[0].get('url')
-
-    # Fallback: any format with url
-    with_url = [f for f in all_formats if f.get('url')]
-    if with_url:
-        return with_url[0].get('url')
-
+def poll_progress(progress_url, max_wait=30):
+    for _ in range(max_wait):
+        r = requests.get(progress_url, headers=HEADERS, timeout=10)
+        data = r.json()
+        # Kalau sudah ada download_url, return
+        dl_url = data.get('download_url') or data.get('url') or data.get('result')
+        if dl_url:
+            return dl_url
+        # Kalau masih proses, tunggu 1 detik
+        status = data.get('status') or data.get('progress')
+        if status in ('failed', 'error'):
+            return None
+        time.sleep(1)
     return None
 
 @app.route('/api', methods=['GET', 'POST'])
@@ -115,7 +81,7 @@ def api_handler():
         title = urllib.parse.unquote(title)
 
         dl_headers = {
-            'User-Agent': 'com.google.android.youtube/19.09.37 (Linux; U; Android 11) gzip',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
             'Referer': 'https://www.youtube.com/',
         }
 
@@ -125,7 +91,7 @@ def api_handler():
                 for chunk in r.iter_content(chunk_size=1024 * 64):
                     if chunk:
                         yield chunk
-            except Exception:
+            except:
                 pass
 
         content_types = {
@@ -157,54 +123,44 @@ def api_handler():
         return jsonify({"success": False, "error": "Silakan masukkan URL YouTube yang valid"}), 400
 
     try:
-        video_id = extract_video_id(url)
-        if not video_id:
-            return jsonify({"success": False, "error": "URL YouTube tidak valid"}), 400
+        # Step 1: Ambil info video
+        info = get_info(url)
+        title = info.get('title', 'YTAudio Cloud')
+        thumbnail = info.get('thumbnail', '')
+        duration = info.get('duration', 0)
 
-        # Coba Android client dulu, fallback ke iOS
-        best_audio_url = None
-        title = 'YTAudio Cloud'
-        thumbnail = ''
-        duration = 0
+        # Step 2: Request download mp3
+        dl_data = get_download(url, fmt='mp3')
+        if not dl_data.get('success'):
+            return jsonify({"success": False, "error": "Gagal memproses video"}), 400
 
-        for client in ['android', 'ios']:
-            try:
-                data = fetch_player(video_id, client)
-                status = data.get('playabilityStatus', {}).get('status', '')
+        progress_url = dl_data.get('progress_url')
+        if not progress_url:
+            return jsonify({"success": False, "error": "Tidak ada progress URL"}), 400
 
-                details = data.get('videoDetails', {})
-                if details.get('title'):
-                    title = details['title']
-                    duration = int(details.get('lengthSeconds', 0))
-                    thumbs = details.get('thumbnail', {}).get('thumbnails', [])
-                    thumbnail = thumbs[-1]['url'] if thumbs else ''
+        # Step 3: Poll sampai dapat download URL
+        final_url = poll_progress(progress_url)
+        if not final_url:
+            return jsonify({"success": False, "error": "Timeout menunggu proses download"}), 400
 
-                best_audio_url = get_best_audio(data)
-                if best_audio_url:
-                    break
-            except Exception:
-                continue
-
-        if not best_audio_url:
-            return jsonify({
-                "success": False,
-                "error": "Gagal mendapatkan stream audio. Coba video lain."
-            }), 400
-
-        base_api_url = "https://python-varcel.vercel.app/api"
+        # Buat format download lewat proxy
         supported_exts = [
             {'ext': 'mp3', 'label': 'MP3 (Audio Populer)'},
+            {'ext': 'm4a', 'label': 'M4A (Original AAC)'},
             {'ext': 'wav', 'label': 'WAV (Kualitas Tinggi)'},
-            {'ext': 'm4a', 'label': 'M4A (Original AAC)'}
         ]
 
         formats_data = []
         for item in supported_exts:
             ext = item['ext']
             encoded_title = urllib.parse.quote(title)
-            encoded_url = urllib.parse.quote(best_audio_url)
-            download_link = f"{base_api_url}?action=download&ext={ext}&title={encoded_title}&url={encoded_url}"
-            formats_data.append({'ext': ext, 'label': item['label'], 'url': download_link})
+            encoded_url = urllib.parse.quote(final_url)
+            download_link = f"{BASE_API_URL}?action=download&ext={ext}&title={encoded_title}&url={encoded_url}"
+            formats_data.append({
+                'ext': ext,
+                'label': item['label'],
+                'url': download_link
+            })
 
         return jsonify({
             'success': True,
@@ -219,21 +175,3 @@ def api_handler():
             'success': False,
             'error': f"Gagal memproses video: {str(e)}"
         }), 500
-
-
-@app.route('/api/debug', methods=['GET'])
-def debug():
-    url = request.args.get('url')
-    if not url:
-        return jsonify({"error": "no url"}), 400
-    video_id = extract_video_id(url)
-    data = fetch_player(video_id, 'android')
-    status = data.get('playabilityStatus', {})
-    streaming = data.get('streamingData', {})
-    adaptive = streaming.get('adaptiveFormats', [])
-    return jsonify({
-        "status": status,
-        "adaptive_count": len(adaptive),
-        "first_format": adaptive[0] if adaptive else None,
-        "has_url": bool(adaptive[0].get('url') if adaptive else False)
-    })
