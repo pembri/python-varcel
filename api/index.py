@@ -1,13 +1,22 @@
 from flask import Flask, request, jsonify, Response
 from flask_cors import CORS
-import yt_dlp
+from pytubefix import YouTube
+from pytubefix.cli import on_progress
 import requests
 import urllib.parse
-import os
-import shutil
+import re
 
 app = Flask(__name__)
 CORS(app)
+
+def format_duration(seconds):
+    if not seconds:
+        return "0:00"
+    m, s = divmod(int(seconds), 60)
+    h, m = divmod(m, 60)
+    if h:
+        return f"{h}:{m:02d}:{s:02d}"
+    return f"{m}:{s:02d}"
 
 @app.route('/api', methods=['GET', 'POST'])
 def api_handler():
@@ -77,98 +86,49 @@ def api_handler():
         return jsonify({"success": False, "error": "Silakan masukkan URL YouTube yang valid"}), 400
 
     try:
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        cookie_source = os.path.join(current_dir, 'cookies.txt')
-        cookie_tmp = '/tmp/cookies.txt'
+        yt = YouTube(url, use_oauth=False, allow_oauth_cache=False)
 
-        if os.path.exists(cookie_source):
-            shutil.copyfile(cookie_source, cookie_tmp)
+        title = yt.title or 'YTAudio Cloud'
+        thumbnail = yt.thumbnail_url or ''
+        duration = yt.length or 0
 
-        ydl_opts = {
-            'noplaylist': True,
-            'quiet': True,
-            'no_warnings': True,
-            'extract_flat': False,
-            # Coba beberapa format audio secara berurutan (anti-crash)
-            'format': 'bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio/best',
-            'cookiefile': cookie_tmp if os.path.exists(cookie_tmp) else None,
-            'http_headers': {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-                'Accept-Language': 'en-US,en;q=0.9',
-                'Referer': 'https://www.youtube.com/',
-            },
-            # Hindari throttle / bot detection
-            'extractor_args': {
-                'youtube': {
-                    'player_client': ['android', 'web'],
-                }
-            },
-        }
+        # Ambil stream audio terbaik
+        audio_stream = yt.streams.filter(only_audio=True).order_by('abr').last()
 
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-            title = info.get('title', 'YTAudio Cloud')
-            thumbnail = info.get('thumbnail', '')
-            duration = info.get('duration', 0)
+        if not audio_stream:
+            return jsonify({"success": False, "error": "Tidak ada stream audio tersedia untuk video ini"}), 400
 
-            # Cari URL audio terbaik
-            best_audio_url = None
-            best_audio_headers = {}
-            formats = info.get('formats', [])
+        best_audio_url = audio_stream.url
+        ext_original = audio_stream.subtype  # biasanya 'mp4' atau 'webm'
 
-            # 1. Format murni audio, urutkan dari bitrate tertinggi
-            audio_formats = [
-                f for f in formats
-                if f.get('vcodec') == 'none' and f.get('acodec') not in (None, 'none')
-            ]
+        base_api_url = "https://python-varcel.vercel.app/api"
 
-            if audio_formats:
-                audio_formats = sorted(audio_formats, key=lambda x: x.get('abr') or x.get('tbr') or 0, reverse=True)
-                best = audio_formats[0]
-                best_audio_url = best.get('url')
-                best_audio_headers = best.get('http_headers', {})
-            
-            # 2. Fallback: URL dari info utama
-            if not best_audio_url:
-                best_audio_url = info.get('url')
-                best_audio_headers = info.get('http_headers', {})
+        supported_exts = [
+            {'ext': 'mp3', 'label': 'MP3 (Audio Populer)'},
+            {'ext': 'wav', 'label': 'WAV (Kualitas Tinggi)'},
+            {'ext': 'm4a', 'label': 'M4A (Original AAC)'}
+        ]
 
-            # 3. Fallback terakhir: format apapun
-            if not best_audio_url and formats:
-                best_audio_url = formats[-1].get('url')
-                best_audio_headers = formats[-1].get('http_headers', {})
-
-            if not best_audio_url:
-                return jsonify({"success": False, "error": "Gagal mengekstrak streaming audio dari video ini"}), 400
-
-            base_api_url = "https://python-varcel.vercel.app/api"
-
-            supported_exts = [
-                {'ext': 'mp3', 'label': 'MP3 (Audio Populer)'},
-                {'ext': 'wav', 'label': 'WAV (Kualitas Tinggi)'},
-                {'ext': 'm4a', 'label': 'M4A (Original AAC)'}
-            ]
-
-            formats_data = []
-            for item in supported_exts:
-                ext = item['ext']
-                label = item['label']
-                encoded_title = urllib.parse.quote(title)
-                encoded_url = urllib.parse.quote(best_audio_url)
-                download_link = f"{base_api_url}?action=download&ext={ext}&title={encoded_title}&url={encoded_url}"
-                formats_data.append({
-                    'ext': ext,
-                    'label': label,
-                    'url': download_link
-                })
-
-            return jsonify({
-                'success': True,
-                'title': title,
-                'thumbnail': thumbnail,
-                'duration': duration,
-                'formats': formats_data
+        formats_data = []
+        for item in supported_exts:
+            ext = item['ext']
+            label = item['label']
+            encoded_title = urllib.parse.quote(title)
+            encoded_url = urllib.parse.quote(best_audio_url)
+            download_link = f"{base_api_url}?action=download&ext={ext}&title={encoded_title}&url={encoded_url}"
+            formats_data.append({
+                'ext': ext,
+                'label': label,
+                'url': download_link
             })
+
+        return jsonify({
+            'success': True,
+            'title': title,
+            'thumbnail': thumbnail,
+            'duration': duration,
+            'formats': formats_data
+        })
 
     except Exception as e:
         return jsonify({
