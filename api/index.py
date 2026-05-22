@@ -5,7 +5,7 @@ import requests
 import urllib.parse
 
 app = Flask(__name__)
-# Mengizinkan akses CORS dari domain mana pun (termasuk Cloudflare Pages Anda)
+# Mengizinkan akses CORS dari domain mana pun
 CORS(app)
 
 @app.route('/api', methods=['GET', 'POST'])
@@ -23,16 +23,13 @@ def api_handler():
         if not stream_url:
             return jsonify({"error": "Missing stream URL"}), 400
             
-        # Decode kembali parameter URL dan judul
         stream_url = urllib.parse.unquote(stream_url)
         title = urllib.parse.unquote(title)
         
-        # Header untuk mengelabui YouTube agar tidak mengembalikan error 403
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         }
         
-        # Generator untuk melakukan streaming data secara berkala (chunk-by-chunk)
         def generate():
             try:
                 r = requests.get(stream_url, stream=True, headers=headers, timeout=30)
@@ -42,7 +39,6 @@ def api_handler():
             except Exception:
                 pass
 
-        # Penentuan Content-Type berdasarkan format yang diminta
         content_types = {
             'mp3': 'audio/mpeg',
             'wav': 'audio/wav',
@@ -51,7 +47,6 @@ def api_handler():
         }
         content_type = content_types.get(ext.lower(), 'application/octet-stream')
         
-        # Membersihkan judul file dari karakter ilegal
         safe_title = "".join([c for c in title if c.isalpha() or c.isdigit() or c in ' -_']).strip()
         if not safe_title:
             safe_title = "audio"
@@ -66,7 +61,7 @@ def api_handler():
         return Response(generate(), headers=response_headers)
 
     # ==========================================
-    # ALUR 2: GENERATE INFO (Mendapatkan Metadata)
+    # ALUR 2: GENERATE INFO (TANPA COOKIES)
     # ==========================================
     url = None
     if request.method == 'POST':
@@ -79,14 +74,20 @@ def api_handler():
         return jsonify({"success": False, "error": "Silakan masukkan URL YouTube yang valid"}), 400
         
     try:
-        # ---> INI KONFIGURASI YANG LU MINTA (PAKAI COOKIES) <---
+        # ---> KONFIGURASI BARU: JALUR NINJA TANPA COOKIES <---
         ydl_opts = {
             'format': 'bestaudio/best',
             'noplaylist': True,
             'quiet': True,
             'no_warnings': True,
             'extract_flat': False,
-            'cookiefile': 'api/cookies.txt' 
+            'nocheckcertificate': True,
+            # Maksa Vercel pakai IPv4 (IPv6 sering kena blokir YouTube)
+            'source_address': '0.0.0.0',
+            # Menyamar jadi klien Android dengan parameter tambahan
+            'extractor_args': {
+                'youtube': ['client=android', 'player_skip=webpage']
+            }
         }
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -97,12 +98,10 @@ def api_handler():
             best_audio_url = info.get('url')
             
             if not best_audio_url:
-                return jsonify({"success": False, "error": "Gagal mengekstrak streaming audio dari URL tersebut"}), 400
+                return jsonify({"success": False, "error": "Gagal mengekstrak streaming audio"}), 400
             
-            # URL dasar API Vercel
             base_api_url = "https://python-varcel.vercel.app/api"
             
-            # Mempersiapkan opsi format audio yang akan ditampilkan di frontend
             formats_data = []
             supported_exts = [
                 {'ext': 'mp3', 'label': 'MP3 (Audio Populer)'},
@@ -114,11 +113,9 @@ def api_handler():
                 ext = item['ext']
                 label = item['label']
                 
-                # Melakukan encoding komponen URL agar aman saat dikirim kembali sebagai parameter
                 encoded_title = urllib.parse.quote(title)
                 encoded_url = urllib.parse.quote(best_audio_url)
                 
-                # Membuat tautan download yang mengarah kembali ke Alur 1 (Proxy Download)
                 download_link = f"{base_api_url}?action=download&ext={ext}&title={encoded_title}&url={encoded_url}"
                 
                 formats_data.append({
