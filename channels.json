@@ -2,19 +2,19 @@
   "channels": [
     {
       "name": "metro",
-      "url": "https://vidiraplay.biz.id/live-session>
+      "url": "https://vidiraplay.biz.id/live-session/channel/metro-tv.m3u8",
       "type": "m3u8",
       "proxy": false
     },
     {
       "name": "tv1",
-      "url": "https://d25tgymtnqzu8s.cloudfront.net/>
+      "url": "https://d25tgymtnqzu8s.cloudfront.net/smil:tv1/manifest.mpd",
       "type": "mpd",
       "proxy": false
     },
     {
       "name": "trans7",
-      "url": "https://vidiraplay.biz.id/live-session>
+      "url": "https://vidiraplay.biz.id/live-session/channel/trans7.m3u8",
       "type": "m3u8",
       "proxy": true
     }
