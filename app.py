@@ -4,7 +4,7 @@ from urllib.parse import quote, unquote
 
 app = Flask(__name__)
 
-BASE_URL = 'https://op-group1-swiftservehd-1.dens.tv/h/h12/'
+BASE_URL = 'https://cdn-server.vidiraplay.biz.id/live-session/trans7.m3u8'
 SOURCE_M3U8 = BASE_URL + '01.m3u8'
 MY_URL = 'https://proxy-live-session-production.up.railway.app'
 
