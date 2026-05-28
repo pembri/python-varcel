@@ -31,10 +31,10 @@
       "proxy": false
     },
     {
-      "name": "tvri-sport",
-      "url": "https://vidiraplay.biz.id/live-session/channel/tvri-sport.m3u8",
+      "name": "mdtv",
+      "url": "https://vidiraplay.biz.id/live-session/channel/mdtv.m3u8",
       "type": "m3u8",
-      "proxy": false
+      "proxy": true
     }
   ]
 }
