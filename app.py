@@ -1,22 +1,19 @@
 from flask import Flask, Response, request
 import requests
-import re
-from urllib.parse import urljoin, urlparse, quote, unquote
+from urllib.parse import quote, unquote
 
 app = Flask(__name__)
 
-SOURCE_M3U8 = 'https://op-group1-swiftservehd-1.dens.tv/h/h12/index.m3u8'
+BASE_URL = 'https://op-group1-swiftservehd-1.dens.tv/h/h12/'
+SOURCE_M3U8 = BASE_URL + '01.m3u8'
+MY_URL = 'https://proxy-live-session-production.up.railway.app'
 
 HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+    'User-Agent': 'Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36',
     'Referer': 'https://op-group1-swiftservehd-1.dens.tv/',
     'Origin': 'https://op-group1-swiftservehd-1.dens.tv',
+    'Accept': '*/*',
 }
-
-def make_absolute(url, base):
-    if url.startswith('http'):
-        return url
-    return urljoin(base, url)
 
 @app.route('/')
 def index():
@@ -26,18 +23,16 @@ def index():
 def proxy_m3u8():
     try:
         r = requests.get(SOURCE_M3U8, headers=HEADERS, timeout=10)
-        base = SOURCE_M3U8.rsplit('/', 1)[0] + '/'
-        
         lines = []
         for line in r.text.splitlines():
-            stripped = line.strip()
-            if stripped == '' or stripped.startswith('#'):
+            s = line.strip()
+            if s == '' or s.startswith('#'):
                 lines.append(line)
             else:
-                abs_url = make_absolute(stripped, base)
-                encoded = quote(abs_url, safe='')
-                lines.append(f'https://proxy-live-session-production.up.railway.app/seg?u={encoded}')
-        
+                # Jadiin absolute URL dulu
+                if not s.startswith('http'):
+                    s = BASE_URL + s
+                lines.append(f'{MY_URL}/seg?u={quote(s, safe="")}')
         return Response('\n'.join(lines),
             content_type='application/vnd.apple.mpegurl',
             headers={'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-cache'}
@@ -49,7 +44,7 @@ def proxy_m3u8():
 def proxy_seg():
     url = unquote(request.args.get('u', ''))
     if not url:
-        return Response('Missing u param', status=400)
+        return Response('Missing u', status=400)
     try:
         r = requests.get(url, headers=HEADERS, stream=True, timeout=15)
         return Response(
