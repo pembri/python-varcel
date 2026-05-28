@@ -32,7 +32,13 @@ class handler(BaseHTTPRequestHandler):
                 target_url,
                 headers={
                     'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36',
-                    'Referer': 'https://vidiraplay.biz.id/'
+                    'Referer': 'https://vidiraplay.biz.id/',
+                    'Origin': 'https://vidiraplay.biz.id',
+                    'Accept': '*/*',
+                    'Accept-Language': 'id-ID,id;q=0.9',
+                    'sec-fetch-site': 'cross-site',
+                    'sec-fetch-mode': 'no-cors',
+                    'sec-fetch-dest': 'video'
                 }
             )
             with urllib.request.urlopen(req, timeout=10) as res:
@@ -46,6 +52,10 @@ class handler(BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(content)
                 
+        except urllib.error.HTTPError as e:
+            self.send_response(e.code)
+            self.end_headers()
+            self.wfile.write(f'HTTP Error {e.code}: {e.reason}'.encode())
         except Exception as e:
             self.send_response(502)
             self.end_headers()
