@@ -2,9 +2,9 @@
   "channels": [
     {
       "name": "metro",
-      "url": "https://vidiraplay.biz.id/live-session/channel/metro-tv.m3u8",
+      "url": "https://vidiraplay.biz.id/live-session/channel/metro.m3u8",
       "type": "m3u8",
-      "proxy": false
+      "proxy": true
     },
     {
       "name": "tv1",
