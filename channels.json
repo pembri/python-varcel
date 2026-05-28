@@ -23,6 +23,12 @@
       "url": "https://vidiraplay.biz.id/live-session/channel/trans-tv.m3u8",
       "type": "m3u8",
       "proxy": true
+    },
+    {
+      "name": "tester",
+      "url": "https://dash.akamaized.net/akamai/bbb_30fps/bbb_30fps.mpd",
+      "type": "mpd",
+      "proxy": false
     }
   ]
 }
