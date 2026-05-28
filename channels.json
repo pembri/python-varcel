@@ -4,7 +4,7 @@
       "name": "metro",
       "url": "https://vidiraplay.biz.id/live-session/channel/metro.m3u8",
       "type": "m3u8",
-      "proxy": true
+      "proxy": false
     },
     {
       "name": "tv1",
