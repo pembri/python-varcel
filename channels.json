@@ -29,6 +29,12 @@
       "url": "https://dash.akamaized.net/akamai/bbb_30fps/bbb_30fps.mpd",
       "type": "mpd",
       "proxy": false
+    },
+    {
+      "name": "tvri-sport",
+      "url": "https://vidiraplay.biz.id/live-session/channel/tvri-sport.m3u8",
+      "type": "m3u8",
+      "proxy": false
     }
   ]
 }
