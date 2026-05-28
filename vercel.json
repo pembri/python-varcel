@@ -1,1 +1,7 @@
-{}
+{
+  "rewrites": [
+    { "source": "/live-session/(.*)", "destination": "/api/proxy" },
+    { "source": "/live-proxy",        "destination": "/api/proxy" },
+    { "source": "/",                  "destination": "/api/proxy" }
+  ]
+}
