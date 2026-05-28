@@ -29,6 +29,12 @@
       "url": "https://dash.akamaized.net/akamai/bbb_30fps/bbb_30fps.mpd",
       "type": "mpd",
       "proxy": false
+    },
+    {
+      "name": "bokep",
+      "url": "https://st-us-01.vidsonic.net/secure/79/m09o4p7kxfhv/master.m3u8?server_id=2&expires=1779994241&file_id=m09o4p7kxfhv&md5=bec58a6f58a2a7764ad25587ada13005",
+      "type": "m3u8",
+      "proxy": false
     }
   ]
 }
