@@ -20,7 +20,7 @@
     },
     {
       "name": "trans-tv",
-      "url": "https://vidiraplay.biz.id/live-session/tchannel/trans-tv.m3u8",
+      "url": "https://vidiraplay.biz.id/live-session/channel/trans-tv.m3u8",
       "type": "m3u8",
       "proxy": true
     }
