@@ -53,12 +53,6 @@ def rewrite_urls_mpd(content, origin_base):
     Rewrite semua URL absolut di dalam MPD (DASH).
     Tangani BaseURL, SegmentTemplate, initialization, media.
     """
-    def replace_abs(m):
-        url = m.group(1)
-        encoded = requests.utils.quote(url, safe="")
-        return m.group(0).replace(url, f"{PROXY_BASE}/fetch?url={encoded}")
-
-    # Rewrite semua https?://... di dalam atribut XML
     content = re.sub(
         r'(https?://[^\s"\'<>]+)',
         lambda m: f"{PROXY_BASE}/fetch?url={requests.utils.quote(m.group(1), safe='')}",
@@ -83,8 +77,8 @@ def fetch_and_rewrite(target_url):
     url_lower = target_url.lower().split("?")[0]
     if url_lower.endswith(".m3u8") or "mpegurl" in content_type_raw or content.strip().startswith("#EXTM3U"):
         # Ambil base URL untuk resolve URL relatif
-        origin_base = re.match(r"(https?://[^?#]+/)", target_url)
-        origin_base = origin_base.group(1) if origin_base else target_url.rsplit("/", 1)[0] + "/"
+        origin_base_match = re.match(r"(https?://[^?#]+/)", target_url)
+        origin_base = origin_base_match.group(1) if origin_base_match else target_url.rsplit("/", 1)[0] + "/"
         content = rewrite_urls_m3u8(content, origin_base)
         content_type = "application/vnd.apple.mpegurl"
 
