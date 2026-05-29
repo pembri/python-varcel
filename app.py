@@ -3,7 +3,7 @@ import re
 import json
 import requests
 from flask import Flask, Response, request, abort
-from urllib.parse import quote, urlparse, urljoin
+from urllib.parse import quote, urljoin
 
 app = Flask(__name__)
 
@@ -24,36 +24,10 @@ def load_channels():
         return {}
 
 
-def to_proxy_url(url):
-    """Encode URL menjadi Railway /fetch?url=... """
-    return f"{PROXY_BASE}/fetch?url={quote(url, safe='')}"
-
-
-def resolve_url(href, base_url):
-    """
-    Resolve URL relatif maupun absolut terhadap base_url.
-    Gunakan urljoin yang sudah handle ../ dan path relatif.
-    """
-    if re.match(r"^https?://", href):
-        return href
-    return urljoin(base_url, href)
-
-
 def rewrite_urls_m3u8(content, base_url):
-    """
-    Rewrite SEMUA URL di dalam M3U8 agar semua request balik lewat proxy.
-    Handle:
-      - Baris URI biasa (chunklist, segment .ts, .aac, dll)
-      - Tag #EXT-X-KEY:URI="..."
-      - Tag #EXT-X-MAP:URI="..."
-      - Tag #EXT-X-MEDIA:URI="..."
-      - URL absolut maupun relatif
-    """
     lines = content.splitlines()
     result = []
-
-    # Pattern untuk tag yang mengandung URI="..."
-    uri_tag_pattern = re.compile(r'(URI=")([^"]+)(")')
+    uri_pattern = re.compile(r'(URI=")([^"]+)(")')
 
     for line in lines:
         stripped = line.strip()
@@ -63,63 +37,28 @@ def rewrite_urls_m3u8(content, base_url):
             continue
 
         if stripped.startswith("#"):
-            # Cek apakah tag ini mengandung URI="..."
+            # FIX: rewrite URI="..." di dalam tag seperti #EXT-X-KEY, #EXT-X-MAP
             def replace_uri(m):
                 uri = m.group(2)
-                full = resolve_url(uri, base_url)
-                return m.group(1) + to_proxy_url(full) + m.group(3)
-
-            new_line = uri_tag_pattern.sub(replace_uri, line)
-            result.append(new_line)
+                full = urljoin(base_url, uri)
+                return m.group(1) + f"{PROXY_BASE}/fetch?url={quote(full, safe='')}" + m.group(3)
+            result.append(uri_pattern.sub(replace_uri, line))
             continue
 
-        # Baris biasa = URL (absolut atau relatif)
-        full = resolve_url(stripped, base_url)
-        result.append(to_proxy_url(full))
+        # Baris URL biasa (segment, sub-playlist)
+        full = urljoin(base_url, stripped)
+        result.append(f"{PROXY_BASE}/fetch?url={quote(full, safe='')}")
 
     return "\n".join(result)
 
 
 def rewrite_urls_mpd(content, base_url):
-    """
-    Rewrite SEMUA URL di dalam MPD (DASH).
-    Handle:
-      - URL absolut https?://...
-      - <BaseURL>...</BaseURL>
-      - initialization="..." dan media="..." di SegmentTemplate (relatif)
-      - Atribut src="..." atau href="..."
-    """
-
-    # 1. Rewrite <BaseURL>URL</BaseURL>
-    def replace_baseurl(m):
-        url = m.group(1).strip()
-        if re.match(r"^https?://", url):
-            return f"<BaseURL>{to_proxy_url(url)}</BaseURL>"
-        else:
-            full = resolve_url(url, base_url)
-            return f"<BaseURL>{to_proxy_url(full)}</BaseURL>"
-
-    content = re.sub(r'<BaseURL>(.*?)</BaseURL>', replace_baseurl, content, flags=re.DOTALL)
-
-    # 2. Rewrite URL absolut dalam atribut XML (initialization, media, src, href, dll)
-    def replace_attr_abs(m):
-        url = m.group(2)
-        if re.match(r"^https?://", url):
-            return m.group(1) + to_proxy_url(url) + m.group(3)
-        return m.group(0)
-
-    content = re.sub(r'((?:initialization|media|src|href)=")([^"]+)(")', replace_attr_abs, content)
-
-    # 3. Rewrite sisa URL absolut yang masih tersisa di dalam atribut/teks
-    def replace_abs(m):
-        url = m.group(0)
-        # Jangan double-encode yang sudah jadi proxy URL
-        if url.startswith(PROXY_BASE):
-            return url
-        return to_proxy_url(url)
-
-    content = re.sub(r'https?://[^\s"\'<>\]]+', replace_abs, content)
-
+    # Rewrite semua URL absolut
+    content = re.sub(
+        r'(https?://[^\s"\'<>]+)',
+        lambda m: f"{PROXY_BASE}/fetch?url={quote(m.group(1), safe='')}",
+        content
+    )
     return content
 
 
@@ -133,48 +72,24 @@ def fetch_and_rewrite(target_url):
         return Response(f"Upstream error: {res.status_code}", status=502)
 
     content_type_raw = res.headers.get("Content-Type", "").lower()
+    content = res.text
 
-    # Gunakan URL final setelah redirect sebagai base
+    # Pakai URL final setelah redirect sebagai base
     final_url = res.url
     base_url = final_url.rsplit("/", 1)[0] + "/"
 
-    # Cek tipe konten
     url_lower = target_url.lower().split("?")[0]
-    is_m3u8 = (
-        url_lower.endswith(".m3u8")
-        or "mpegurl" in content_type_raw
-        or res.text.strip().startswith("#EXTM3U")
-    )
-    is_mpd = url_lower.endswith(".mpd") or "dash+xml" in content_type_raw
 
-    if is_m3u8:
-        content = rewrite_urls_m3u8(res.text, base_url)
+    if url_lower.endswith(".m3u8") or "mpegurl" in content_type_raw or content.strip().startswith("#EXTM3U"):
+        content = rewrite_urls_m3u8(content, base_url)
         content_type = "application/vnd.apple.mpegurl"
-        return Response(
-            content,
-            status=200,
-            headers={
-                "Content-Type": content_type,
-                "Access-Control-Allow-Origin": "*",
-                "Cache-Control": "no-cache, no-store, must-revalidate",
-            }
-        )
 
-    elif is_mpd:
-        content = rewrite_urls_mpd(res.text, base_url)
+    elif url_lower.endswith(".mpd") or "dash+xml" in content_type_raw:
+        content = rewrite_urls_mpd(content, base_url)
         content_type = "application/dash+xml"
-        return Response(
-            content,
-            status=200,
-            headers={
-                "Content-Type": content_type,
-                "Access-Control-Allow-Origin": "*",
-                "Cache-Control": "no-cache, no-store, must-revalidate",
-            }
-        )
 
     else:
-        # File lain (segment .ts, .mp4, .aac, key, dll) — stream langsung
+        # Segment, key, dll — stream langsung
         return Response(
             res.content,
             status=res.status_code,
@@ -185,10 +100,17 @@ def fetch_and_rewrite(target_url):
             }
         )
 
+    return Response(
+        content,
+        status=200,
+        headers={
+            "Content-Type": content_type,
+            "Access-Control-Allow-Origin": "*",
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+        }
+    )
 
-# =============================================
-# Route: /fetch?url=<encoded_url>
-# =============================================
+
 @app.route("/fetch")
 def fetch_proxy():
     target_url = request.args.get("url", "").strip()
@@ -199,9 +121,6 @@ def fetch_proxy():
     return fetch_and_rewrite(target_url)
 
 
-# =============================================
-# Route: /live-session/<channel>
-# =============================================
 @app.route("/live-session/<path:filename>")
 def live_session(filename):
     channels = load_channels()
@@ -221,9 +140,6 @@ def live_session(filename):
     return fetch_and_rewrite(matched["url"])
 
 
-# =============================================
-# Health check
-# =============================================
 @app.route("/")
 def index():
     channels = load_channels()
