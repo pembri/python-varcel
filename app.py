@@ -3,6 +3,7 @@ import re
 import json
 import requests
 from flask import Flask, Response, request, abort
+from urllib.parse import quote, urlparse, urljoin
 
 app = Flask(__name__)
 
@@ -23,47 +24,108 @@ def load_channels():
         return {}
 
 
-def rewrite_urls_m3u8(content, origin_base):
+def to_proxy_url(url):
+    """Encode URL menjadi Railway /fetch?url=... """
+    return f"{PROXY_BASE}/fetch?url={quote(url, safe='')}"
+
+
+def resolve_url(href, base_url):
     """
-    Rewrite semua URL absolut maupun relatif di dalam M3U8
-    agar semua request balik lewat proxy ini.
+    Resolve URL relatif maupun absolut terhadap base_url.
+    Gunakan urljoin yang sudah handle ../ dan path relatif.
+    """
+    if re.match(r"^https?://", href):
+        return href
+    return urljoin(base_url, href)
+
+
+def rewrite_urls_m3u8(content, base_url):
+    """
+    Rewrite SEMUA URL di dalam M3U8 agar semua request balik lewat proxy.
+    Handle:
+      - Baris URI biasa (chunklist, segment .ts, .aac, dll)
+      - Tag #EXT-X-KEY:URI="..."
+      - Tag #EXT-X-MAP:URI="..."
+      - Tag #EXT-X-MEDIA:URI="..."
+      - URL absolut maupun relatif
     """
     lines = content.splitlines()
     result = []
+
+    # Pattern untuk tag yang mengandung URI="..."
+    uri_tag_pattern = re.compile(r'(URI=")([^"]+)(")')
+
     for line in lines:
         stripped = line.strip()
-        # Lewati komentar/tag yang bukan URI
-        if stripped.startswith("#") or stripped == "":
+
+        if stripped == "":
             result.append(line)
             continue
-        # URL absolut
-        if re.match(r"^https?://", stripped):
-            encoded = requests.utils.quote(stripped, safe="")
-            result.append(f"{PROXY_BASE}/fetch?url={encoded}")
-        else:
-            # URL relatif — gabung dengan origin_base
-            full_url = origin_base.rstrip("/") + "/" + stripped.lstrip("/")
-            encoded = requests.utils.quote(full_url, safe="")
-            result.append(f"{PROXY_BASE}/fetch?url={encoded}")
+
+        if stripped.startswith("#"):
+            # Cek apakah tag ini mengandung URI="..."
+            def replace_uri(m):
+                uri = m.group(2)
+                full = resolve_url(uri, base_url)
+                return m.group(1) + to_proxy_url(full) + m.group(3)
+
+            new_line = uri_tag_pattern.sub(replace_uri, line)
+            result.append(new_line)
+            continue
+
+        # Baris biasa = URL (absolut atau relatif)
+        full = resolve_url(stripped, base_url)
+        result.append(to_proxy_url(full))
+
     return "\n".join(result)
 
 
-def rewrite_urls_mpd(content, origin_base):
+def rewrite_urls_mpd(content, base_url):
     """
-    Rewrite semua URL absolut di dalam MPD (DASH).
-    Tangani BaseURL, SegmentTemplate, initialization, media.
+    Rewrite SEMUA URL di dalam MPD (DASH).
+    Handle:
+      - URL absolut https?://...
+      - <BaseURL>...</BaseURL>
+      - initialization="..." dan media="..." di SegmentTemplate (relatif)
+      - Atribut src="..." atau href="..."
     """
-    content = re.sub(
-        r'(https?://[^\s"\'<>]+)',
-        lambda m: f"{PROXY_BASE}/fetch?url={requests.utils.quote(m.group(1), safe='')}",
-        content
-    )
+
+    # 1. Rewrite <BaseURL>URL</BaseURL>
+    def replace_baseurl(m):
+        url = m.group(1).strip()
+        if re.match(r"^https?://", url):
+            return f"<BaseURL>{to_proxy_url(url)}</BaseURL>"
+        else:
+            full = resolve_url(url, base_url)
+            return f"<BaseURL>{to_proxy_url(full)}</BaseURL>"
+
+    content = re.sub(r'<BaseURL>(.*?)</BaseURL>', replace_baseurl, content, flags=re.DOTALL)
+
+    # 2. Rewrite URL absolut dalam atribut XML (initialization, media, src, href, dll)
+    def replace_attr_abs(m):
+        url = m.group(2)
+        if re.match(r"^https?://", url):
+            return m.group(1) + to_proxy_url(url) + m.group(3)
+        return m.group(0)
+
+    content = re.sub(r'((?:initialization|media|src|href)=")([^"]+)(")', replace_attr_abs, content)
+
+    # 3. Rewrite sisa URL absolut yang masih tersisa di dalam atribut/teks
+    def replace_abs(m):
+        url = m.group(0)
+        # Jangan double-encode yang sudah jadi proxy URL
+        if url.startswith(PROXY_BASE):
+            return url
+        return to_proxy_url(url)
+
+    content = re.sub(r'https?://[^\s"\'<>\]]+', replace_abs, content)
+
     return content
 
 
 def fetch_and_rewrite(target_url):
     try:
-        res = requests.get(target_url, headers=HEADERS, timeout=15)
+        res = requests.get(target_url, headers=HEADERS, timeout=15, allow_redirects=True)
     except requests.exceptions.RequestException as e:
         return Response(f"Fetch error: {e}", status=502)
 
@@ -71,24 +133,48 @@ def fetch_and_rewrite(target_url):
         return Response(f"Upstream error: {res.status_code}", status=502)
 
     content_type_raw = res.headers.get("Content-Type", "").lower()
-    content = res.text
 
-    # Tentukan tipe berdasarkan URL atau Content-Type
+    # Gunakan URL final setelah redirect sebagai base
+    final_url = res.url
+    base_url = final_url.rsplit("/", 1)[0] + "/"
+
+    # Cek tipe konten
     url_lower = target_url.lower().split("?")[0]
-    if url_lower.endswith(".m3u8") or "mpegurl" in content_type_raw or content.strip().startswith("#EXTM3U"):
-        # Ambil base URL untuk resolve URL relatif
-        origin_base_match = re.match(r"(https?://[^?#]+/)", target_url)
-        origin_base = origin_base_match.group(1) if origin_base_match else target_url.rsplit("/", 1)[0] + "/"
-        content = rewrite_urls_m3u8(content, origin_base)
-        content_type = "application/vnd.apple.mpegurl"
+    is_m3u8 = (
+        url_lower.endswith(".m3u8")
+        or "mpegurl" in content_type_raw
+        or res.text.strip().startswith("#EXTM3U")
+    )
+    is_mpd = url_lower.endswith(".mpd") or "dash+xml" in content_type_raw
 
-    elif url_lower.endswith(".mpd") or "dash+xml" in content_type_raw:
-        origin_base = target_url.rsplit("/", 1)[0] + "/"
-        content = rewrite_urls_mpd(content, origin_base)
+    if is_m3u8:
+        content = rewrite_urls_m3u8(res.text, base_url)
+        content_type = "application/vnd.apple.mpegurl"
+        return Response(
+            content,
+            status=200,
+            headers={
+                "Content-Type": content_type,
+                "Access-Control-Allow-Origin": "*",
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+            }
+        )
+
+    elif is_mpd:
+        content = rewrite_urls_mpd(res.text, base_url)
         content_type = "application/dash+xml"
+        return Response(
+            content,
+            status=200,
+            headers={
+                "Content-Type": content_type,
+                "Access-Control-Allow-Origin": "*",
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+            }
+        )
 
     else:
-        # File lain (chunklist, segment, dll) — stream langsung tanpa rewrite
+        # File lain (segment .ts, .mp4, .aac, key, dll) — stream langsung
         return Response(
             res.content,
             status=res.status_code,
@@ -99,20 +185,9 @@ def fetch_and_rewrite(target_url):
             }
         )
 
-    return Response(
-        content,
-        status=200,
-        headers={
-            "Content-Type": content_type,
-            "Access-Control-Allow-Origin": "*",
-            "Cache-Control": "no-cache, no-store, must-revalidate",
-        }
-    )
-
 
 # =============================================
 # Route: /fetch?url=<encoded_url>
-# Dipakai oleh worker.js maupun rekursif dari playlist
 # =============================================
 @app.route("/fetch")
 def fetch_proxy():
@@ -126,7 +201,6 @@ def fetch_proxy():
 
 # =============================================
 # Route: /live-session/<channel>
-# Akses langsung berdasarkan nama channel
 # =============================================
 @app.route("/live-session/<path:filename>")
 def live_session(filename):
